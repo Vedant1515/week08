@@ -2,8 +2,6 @@
 
 name: CD - Deploy Frontend to AKS
 
-# This workflow can be called by other workflows and takes inputs.
-# Or it can be run manually if you provide the IPs.
 on:
   workflow_dispatch:
     inputs:
@@ -55,12 +53,23 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       # Login to Azure Container Registry (ACR)
-      # FIX: az acr login --name expects the ACR NAME (no .azurecr.io)
-      #      Provide this in repo secret AZURE_ACR_NAME (e.g., sit722wk08acr1234)
+      # FIX: Derive ACR NAME from ACR_LOGIN_SERVER and do token-based docker login.
+      # Requires repo secret: ACR_LOGIN_SERVER (e.g., sit722wk08acr1234.azurecr.io)
       - name: Login to Azure Container Registry
-        run: az acr login --name ${{ secrets.AZURE_ACR_NAME }}
+        env:
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          set -e
+          if [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "ACR_LOGIN_SERVER secret is empty. Set it to '<name>.azurecr.io' in repo secrets."
+            exit 1
+          fi
+          ACR_NAME="$(echo "$ACR_LOGIN_SERVER" | cut -d. -f1)"
+          echo "Logging into ACR: $ACR_LOGIN_SERVER (name: $ACR_NAME)"
+          TOKEN="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
+          echo "$TOKEN" | docker login "$ACR_LOGIN_SERVER" -u 00000000-0000-0000-0000-000000000000 --password-stdin
 
-      # Inject Backend IPs into Frontend main.js (kept exactly as in your file)
+      # Inject Backend IPs into Frontend main.js (kept as-is)
       - name: Inject Backend IPs into Frontend main.js
         run: |
           echo "Injecting IPs into frontend/main.js"
@@ -70,13 +79,14 @@ jobs:
           cat frontend/main.js
           echo "---------------------------------"
 
-      # Build and Push Docker image for Frontend
-      # FIX: Use ACR_LOGIN_SERVER (e.g., sit722wk08acr1234.azurecr.io) for image tags
-      #      Provide this in repo secret ACR_LOGIN_SERVER
+      # Build and Push Docker image for Frontend (unchanged except variable usage)
       - name: Build and Push Frontend Image
+        env:
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
         run: |
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/frontend:latest ./frontend/
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/frontend:latest
+          set -e
+          docker build -t "$ACR_LOGIN_SERVER/frontend:latest" ./frontend/
+          docker push  "$ACR_LOGIN_SERVER/frontend:latest"
 
       - name: Set Kubernetes context (get AKS credentials)
         uses: azure/aks-set-context@v3
