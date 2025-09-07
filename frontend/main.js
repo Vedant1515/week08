@@ -1,4 +1,6 @@
 // week08/frontend/main.js
+export const PRODUCT_API_BASE_URL = "http://20.11.241.20:8000"; // no trailing slash
+export const ORDER_API_BASE_URL   = "http://4.198.87.32:8001";  // no trailing slash
 
 document.addEventListener('DOMContentLoaded', () => {
     // API endpoints for the Product and Order services.
