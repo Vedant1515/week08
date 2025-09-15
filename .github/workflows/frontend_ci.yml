@@ -1,44 +1,56 @@
-# week08/.github/workflows/frontend_ci.yml
-name: Frontend CI - Build & Push Image
+name: Frontend CI — Build, Push
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
+  pull_request:
+    branches: [ develop, main ]
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend_ci.yml'
+  push:
+    branches: [ develop, main ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend_ci.yml'
+  workflow_dispatch: {}
 
 env:
-  # Login server like: sit722wk08acr1234.azurecr.io  (set as repo secret)
   ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-  # Optional unique tag; keep latest too for simplicity
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}
+
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build_and_push_frontend:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v1
+      - name: Azure login via OIDC
+        uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # IMPORTANT: use the ACR NAME (no domain) here
-      - name: Login to Azure Container Registry
-        run: az acr login --name ${{ secrets.AZURE_ACR_NAME }}
-
-      - name: Build and Push Frontend Image
+      - name: Login to ACR
+        env:
+          ACR_LOGIN_SERVER: ${{ env.ACR_LOGIN_SERVER }}
         run: |
-          docker build -t $ACR_LOGIN_SERVER/frontend:latest ./frontend
-          docker push $ACR_LOGIN_SERVER/frontend:latest
-          # optional also push a unique tag for traceability
-          docker tag  $ACR_LOGIN_SERVER/frontend:latest $ACR_LOGIN_SERVER/frontend:$IMAGE_TAG
-          docker push $ACR_LOGIN_SERVER/frontend:$IMAGE_TAG
+          set -e
+          if [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "ACR_LOGIN_SERVER secret missing (e.g. myacr.azurecr.io)"
+            exit 1
+          fi
+          ACR_NAME="$(echo "$ACR_LOGIN_SERVER" | cut -d. -f1)"
+          TOKEN="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
+          echo "$TOKEN" | docker login "$ACR_LOGIN_SERVER" -u 00000000-0000-0000-0000-000000000000 --password-stdin
 
-      - name: Azure Logout
-        if: always()
-        run: az logout
+      - name: Build and push image
+        run: |
+          set -e
+          docker build -t $ACR_LOGIN_SERVER/frontend:latest ./frontend
+          docker tag  $ACR_LOGIN_SERVER/frontend:latest $ACR_LOGIN_SERVER/frontend:$IMAGE_TAG
+          docker push $ACR_LOGIN_SERVER/frontend:latest
+          docker push $ACR_LOGIN_SERVER/frontend:$IMAGE_TAG
